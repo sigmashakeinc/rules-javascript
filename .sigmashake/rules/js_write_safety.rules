@@ -1,0 +1,115 @@
+# js_write_safety.rules — JavaScript write-time security enforcement.
+# Technology: js | Capability: write
+# Covers: eval/Function, prototype pollution, command injection, XSS, SQL injection, insecure randomness, path traversal.
+
+rule no-eval {
+  enabled true
+  priority 100
+  severity error
+  DENY write
+  IF path GLOB "**/*.js" AND content CONTAINS "eval("
+  OR path GLOB "**/*.mjs" AND content CONTAINS "eval("
+  OR path GLOB "**/*.cjs" AND content CONTAINS "eval("
+  MESSAGE "eval() executes arbitrary strings as code — a critical injection vector. Refactor to use a JSON.parse(), a lookup table, or a proper parser."
+}
+
+rule no-new-function {
+  enabled true
+  priority 100
+  severity error
+  DENY write
+  IF path GLOB "**/*.js" AND content LINE_REGEX "new Function\\s*\\("
+  OR path GLOB "**/*.mjs" AND content LINE_REGEX "new Function\\s*\\("
+  OR path GLOB "**/*.cjs" AND content LINE_REGEX "new Function\\s*\\("
+  MESSAGE "new Function() constructs and executes arbitrary code at runtime — equivalent to eval(). Use a safer dispatch pattern instead."
+}
+
+rule no-prototype-pollution {
+  enabled true
+  priority 95
+  severity error
+  DENY write
+  IF path GLOB "**/*.js" AND content CONTAINS "__proto__"
+  OR path GLOB "**/*.mjs" AND content CONTAINS "__proto__"
+  OR path GLOB "**/*.js" AND content LINE_REGEX "\\[.constructor.\\]\\[.prototype.\\]"
+  MESSAGE "__proto__ mutation enables prototype pollution attacks that can compromise all objects in the runtime. Use Object.create(null) for safe dictionaries or validate keys before assignment."
+}
+
+rule no-child-process-exec-concat {
+  enabled true
+  priority 95
+  severity error
+  DENY write
+  IF path GLOB "**/*.js" AND content LINE_REGEX "exec\\s*\\(\\s*[`'\"].*\\$\\{"
+  OR path GLOB "**/*.mjs" AND content LINE_REGEX "exec\\s*\\(\\s*[`'\"].*\\$\\{"
+  OR path GLOB "**/*.js" AND content LINE_REGEX "exec\\s*\\(\\s*['\"].*\\+\\s*"
+  MESSAGE "String interpolation/concatenation in exec() creates a command injection vulnerability. Use execFile() with an arguments array, or spawn() with shell: false."
+}
+
+rule no-sql-template-literal {
+  enabled true
+  priority 95
+  severity error
+  DENY write
+  IF path GLOB "**/*.js" AND content LINE_REGEX "(query|execute|run)\\s*\\(\\s*`[^`]*\\$\\{"
+  OR path GLOB "**/*.mjs" AND content LINE_REGEX "(query|execute|run)\\s*\\(\\s*`[^`]*\\$\\{"
+  OR path GLOB "**/*.js" AND content LINE_REGEX "(query|execute|run)\\s*\\(\\s*['\"].*\\+\\s*"
+  MESSAGE "Template literals or string concatenation in SQL queries allow SQL injection. Use parameterized queries: db.query('SELECT * FROM t WHERE id = ?', [id])"
+}
+
+rule no-innerhtml-assignment {
+  enabled true
+  priority 90
+  severity error
+  ASK write
+  IF path GLOB "**/*.js" AND content LINE_REGEX "\\.innerHTML\\s*="
+  OR path GLOB "**/*.mjs" AND content LINE_REGEX "\\.innerHTML\\s*="
+  OR path GLOB "**/*.js" AND content CONTAINS "document.write("
+  MESSAGE "innerHTML and document.write() with unsanitized input enable XSS attacks. Use textContent for plain text, or sanitize with DOMPurify before setting innerHTML."
+  PROMPT "Is the value being assigned to innerHTML sanitized with DOMPurify or equivalent? If not, use textContent or sanitize the input first."
+}
+
+rule no-require-user-input {
+  enabled true
+  priority 90
+  severity error
+  DENY write
+  IF path GLOB "**/*.js" AND content LINE_REGEX "require\\s*\\(\\s*req\\."
+  OR path GLOB "**/*.js" AND content LINE_REGEX "require\\s*\\(\\s*.*\\+\\s*req\\."
+  OR path GLOB "**/*.js" AND content LINE_REGEX "require\\s*\\(\\s*`[^`]*\\$\\{\\s*req\\."
+  MESSAGE "require() with user-supplied input enables path traversal and arbitrary module loading. Validate and whitelist module names before dynamic require."
+}
+
+rule no-math-random-crypto {
+  enabled true
+  priority 85
+  severity error
+  DENY write
+  IF path GLOB "**/*.js" AND content LINE_REGEX "Math\\.random\\s*\\(\\s*\\).*token"
+  OR path GLOB "**/*.js" AND content LINE_REGEX "Math\\.random\\s*\\(\\s*\\).*secret"
+  OR path GLOB "**/*.js" AND content LINE_REGEX "Math\\.random\\s*\\(\\s*\\).*password"
+  OR path GLOB "**/*.js" AND content LINE_REGEX "Math\\.random\\s*\\(\\s*\\).*key"
+  MESSAGE "Math.random() is not cryptographically secure. Use crypto.randomBytes() or crypto.getRandomValues() for security-sensitive random values like tokens, keys, and passwords."
+}
+
+rule no-hardcoded-secrets-js {
+  enabled true
+  priority 90
+  severity error
+  ASK write
+  IF path GLOB "**/*.js" AND content LINE_REGEX "(password|passwd|api_key|apiKey|secret|token|auth_token)\\s*[=:]\\s*['\"][^'\"]{8,}['\"]"
+  OR path GLOB "**/*.mjs" AND content LINE_REGEX "(password|passwd|api_key|apiKey|secret|token|auth_token)\\s*[=:]\\s*['\"][^'\"]{8,}['\"]"
+  MESSAGE "Hardcoded credential detected. Store secrets in environment variables and access via process.env.SECRET_NAME — never embed them in source code."
+  PROMPT "Is this a real credential or a placeholder? If real, move it to an environment variable and remove from source."
+}
+
+rule no-path-traversal-js {
+  enabled true
+  priority 90
+  severity error
+  ASK write
+  IF path GLOB "**/*.js" AND content LINE_REGEX "(readFile|writeFile|createReadStream|createWriteStream|unlink)\\s*\\([^)]*req\\."
+  OR path GLOB "**/*.js" AND content LINE_REGEX "(readFile|writeFile)\\s*\\(\\s*[^)]*\\+\\s*"
+  MESSAGE "File system operations with user-controlled paths enable path traversal attacks (e.g., ../../etc/passwd). Sanitize paths with path.resolve() and validate they stay within the intended directory."
+  PROMPT "Is the file path validated against an allowed base directory? Use path.resolve(base, userInput) and check that the result starts with the expected base path."
+}

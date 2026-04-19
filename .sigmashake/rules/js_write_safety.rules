@@ -110,3 +110,79 @@ rule no-path-traversal-js {
   OR path GLOB "**/*.js" AND content LINE_REGEX "(readFile|writeFile)\\s*\\(\\s*[^)]*\\+\\s*"
   MESSAGE "File system operations with user-controlled paths enable path traversal attacks (e.g., ../../etc/passwd). Sanitize paths with path.resolve() and validate they stay within the intended directory."
 }
+
+rule no-polyfill-io-cdn {
+  enabled true
+  priority 100
+  severity error
+  DENY write
+  IF path GLOB "**/*.{js,mjs,cjs,ts,tsx,jsx,html}" AND content CONTAINS "cdn.polyfill.io"
+  OR path GLOB "**/*.{js,mjs,cjs,ts,tsx,jsx,html}" AND content CONTAINS "polyfill.io/v3"
+  MESSAGE "polyfill.io was compromised in June 2024 and served malware to 100k+ sites (Sansec/Cloudflare advisory). Remove the script or switch to cdnjs.cloudflare.com/polyfill or self-host."
+}
+
+rule no-nextjs-middleware-subrequest-bypass {
+  enabled true
+  priority 95
+  severity error
+  DENY write
+  IF path GLOB "**/*.{js,mjs,ts,tsx}" AND content CONTAINS "x-middleware-subrequest"
+  MESSAGE "Setting or trusting the 'x-middleware-subrequest' header enables the Next.js middleware auth bypass (CVE-2025-29927). Upgrade Next.js to 15.2.3/14.2.25 and never forward this header from clients."
+}
+
+rule no-jwt-none-algorithm {
+  enabled true
+  priority 95
+  severity error
+  DENY write
+  IF path GLOB "**/*.{js,mjs,cjs,ts}" AND content LINE_REGEX "algorithm[s]?\\s*:\\s*\\[?\\s*['\"]none['\"]"
+  MESSAGE "JWT 'none' algorithm lets attackers forge unsigned tokens (classic jsonwebtoken bypass). Use RS256/ES256/HS256 and pass { algorithms: ['RS256'] } to verify()."
+}
+
+rule no-tls-reject-unauthorized-false {
+  enabled true
+  priority 95
+  severity error
+  DENY write
+  IF path GLOB "**/*.{js,mjs,cjs,ts}" AND content LINE_REGEX "rejectUnauthorized\\s*:\\s*false"
+  OR path GLOB "**/*.{js,mjs,cjs,ts}" AND content CONTAINS "NODE_TLS_REJECT_UNAUTHORIZED"
+  MESSAGE "Disabling TLS certificate verification allows trivial MITM attacks. Trust the system CA store, or load the internal CA via tls.createSecureContext({ ca }) instead of disabling verification."
+}
+
+rule no-dangerously-set-inner-html {
+  enabled true
+  priority 85
+  severity error
+  LOG write
+  IF path GLOB "**/*.{jsx,tsx,js,ts}" AND content CONTAINS "dangerouslySetInnerHTML"
+  MESSAGE "dangerouslySetInnerHTML bypasses React's XSS protection. Render as text, or sanitize with DOMPurify.sanitize() before injecting HTML."
+}
+
+rule no-postmessage-wildcard {
+  enabled true
+  priority 85
+  severity error
+  LOG write
+  IF path GLOB "**/*.{js,mjs,ts,tsx,jsx}" AND content LINE_REGEX "postMessage\\s*\\([^)]*,\\s*['\"]\\*['\"]"
+  MESSAGE "postMessage with targetOrigin '*' leaks data to any origin and enables cross-origin attacks. Pass the explicit target origin string."
+}
+
+rule no-cors-wildcard-with-credentials {
+  enabled true
+  priority 90
+  severity error
+  DENY write
+  IF path GLOB "**/*.{js,mjs,cjs,ts}" AND content LINE_REGEX "origin\\s*:\\s*['\"]\\*['\"][\\s\\S]*credentials\\s*:\\s*true"
+  OR path GLOB "**/*.{js,mjs,cjs,ts}" AND content LINE_REGEX "Access-Control-Allow-Origin['\"]?\\s*,\\s*['\"]\\*"
+  MESSAGE "CORS wildcard origin combined with credentials: true is rejected by browsers and indicates a broken auth model. Reflect a validated allowlisted origin instead."
+}
+
+rule no-node-vm-as-sandbox {
+  enabled true
+  priority 90
+  severity error
+  DENY write
+  IF path GLOB "**/*.{js,mjs,cjs,ts}" AND content LINE_REGEX "require\\s*\\(\\s*['\"]vm2['\"]"
+  OR path GLOB "**/*.{js,mjs,cjs,ts}" AND content LINE_REGEX "from\\s+['\"]vm2['\"]"
+  MESSAGE "vm2 is deprecated and has unpatched sandbox-escape CVEs (CVE-2023-37466, 2023-37903); node:vm is explicitly not a security sandbox. Use isolated-vm or a separate process/container for untrusted code."
+}
